@@ -1,0 +1,195 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Star Sketch</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #222; overflow: hidden; }
+  main { display: flex; justify-content: center; align-items: center; height: 100vh; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script src="img-data.js"></script>
+</head>
+<body>
+<script>
+/*
+2026/06/02 randomCrop() fix.
+When fetching images, `image()` is faster than `get()`!
+*/
+let num;
+let cs;
+let paletteSelected;
+let pg, pg2; // (added) declare the two see-through layers
+
+let img;
+let palette = ["#F9F9F1", "#191A18", "#E15521", "#3391CF", "#E4901C", "#F5B2B1", "#009472"]
+let t = 0.0;
+let vel = 0.5;
+
+function preload() {
+	// ORIGINAL: img = loadImage("img.jpg")
+	// Same picture (img.jpg), but loaded from img-data.js so it also works
+	// when you open this page straight from your computer.
+	img = loadImage(IMG_DATA)
+}
+
+function windowResized() {
+	cs = min(windowHeight, windowWidth);
+	resizeCanvas(cs, cs);
+	resetAndRestart()
+}
+
+function resetAndRestart() {
+	randomSeed(num);
+	noiseSeed(num);
+	////texture----------------------------------
+	pg = createGraphics(width, height)
+	pg.noStroke();
+	let particle_count = floor((cs * cs) * 0.08);
+	pg.randomSeed(num);
+
+	for (let i = 0; i < particle_count; i++) {
+		let x = pg.random(width);
+		let y = pg.random(height);
+		let n = noise(x * 0.01, y * 0.01) * ((cs + cs) / 2 * 0.002);
+		pg.fill(255, 100);
+		pg.ellipse(x, y, n, n);
+	}
+
+	pg2 = createGraphics(width, height)
+	for (let j = 0; j < 1000; j++) {
+		pg2.noStroke();
+		pg2.fill(random(palette))
+		pg2.ellipse(randomGaussian(width / 2, width * 0.3), randomGaussian(height / 2, height * 0.3), random() < 0.9 ? width * random(0.001, 0.003) : width * random(0.005, 0.007))
+	}
+}
+
+function setup() {
+	cs = min(windowHeight, windowWidth);
+	createCanvas(cs, cs);
+	rectMode(CENTER)
+	angleMode(DEGREES);
+	num = random(100000);
+	paletteSelected = random(palettes);
+	img = img.get(40, 20, img.width - 40, img.height - 20); // (added) trim the gray strip on the left and the rounded top corner
+	resetAndRestart()
+}
+
+function draw() {
+	randomSeed(num);
+	background("#f4f1de");
+
+	circlePacking();
+	image(pg2, 0, 0)
+	image(pg, 0, 0)
+	t += vel;
+}
+
+// (added) p5.js runs this every time you click.
+function mousePressed() {
+	num = random(100000);               // pick a new lucky number
+	paletteSelected = random(palettes); // pick a new crayon box
+	resetAndRestart();                  // remake the confetti and sparkles
+}
+
+function circlePacking() {
+	noStroke();
+	fill(51)
+	push();
+	let points = [];
+	let count = 1000;
+	for (let i = 0; i < count; i++) {
+		let s = random(15, 200);
+		let x = random(width);
+		let y = random(height);
+		let add = true;
+		for (let j = 0; j < points.length; j++) {
+			let p = points[j];
+			if (dist(x, y, p.x, p.y) < (s + p.z) * 0.6) {
+				add = false;
+				break;
+			}
+		}
+		if (add) points.push(createVector(x, y, s));
+	}
+	for (let i = 0; i < points.length; i++) {
+		let p = points[i];
+		push();
+		translate(p.x, p.y);
+		let ran = random([-1, 1])
+		rotate(ran * (t * 0.5))
+		let r = p.z - 5;
+
+		fill(randomCol())
+		stroke(randomCol())
+
+		push();
+		star(0, 0, r)
+		drawingContext.clip()
+
+		push();
+		blendMode(OVERLAY)
+		draw_randomCrop(-r, -r, r * 2);
+		star(0, 0, r)
+
+		pop();
+		pop();
+		pop();
+	}
+	pop();
+}
+
+function draw_randomCrop(x, y, w) {
+	push();
+	translate(x, y);
+	randomCrop(w);
+	pop();
+}
+
+function randomCrop(w) {
+	let cropX = random(0, img.width - w * 2);
+	let cropY = random(0, img.height - w * 2);
+	image(img, 0, 0, w * 2, w * 2, cropX, cropY, w * 2, w * 2);
+}
+
+function star(x, y, r) {
+	push();
+	noStroke();
+	translate(x, y);
+	let verticesNums = floor(random(3, 12)); //頂点数
+	let depth = 1 - random(); //くびれの深さ
+	let radiusOuter = r;
+	let radiusInner = r * depth;
+	let angle = 360 / verticesNums
+
+	beginShape();
+	for (let i = 0; i < 360; i += angle) {
+		let ex = radiusOuter * cos(i);
+		let ey = radiusOuter * sin(i);
+		vertex(ex, ey);
+		let ex2 = radiusInner * cos(i + (angle * 0.5));
+		let ey2 = radiusInner * sin(i + (angle * 0.5));
+		vertex(ex2, ey2);
+	}
+	endShape(CLOSE);
+	pop();
+}
+
+function randomCol() {
+	let randoms = int(random(1, paletteSelected.length));
+	return color(paletteSelected[randoms]);
+}
+let palettes = [
+	["#3c4cad", "#5FB49C", "#e8a49c"],
+	["#1c3560", "#ff6343", "#f2efdb", "#fea985"],
+	["#e0d7c5", "#488a50", "#b59a55", "#bf5513", "#3b6fb6", "#4f3224", "#9a7f6e"],
+	["#DEEFB7", "#5FB49C", "#ed6a5a"],
+	["#2B2B2B", "#91B3E1", "#2F5FB3", "#3D4B89", "#AE99E8", "#DBE2EC"],
+	["#ffbe0b", "#fb5607", "#ff006e", "#8338ec", "#3a86ff"],
+	["#A8C25D", "#5B7243", "#FFA088", "#FFFB42", "#a9cff0", "#2D6EA6"],
+	["#F9F9F1", "#191A18", "#E15521", "#3391CF", "#E4901C", "#F5B2B1", "#009472"]
+];
+</script>
+</body>
+</html>
