@@ -7,30 +7,114 @@
 <style>
   html, body { margin: 0; padding: 0; background: #222; overflow: hidden; }
   main { display: flex; justify-content: center; align-items: center; height: 100vh; }
+  canvas { touch-action: none; } /* so dragging on a phone doesn't scroll the page */
+
+  /* The help card */
+  #help {
+    position: fixed; left: 16px; bottom: 16px; z-index: 10;
+    width: 300px; max-width: calc(100% - 32px); box-sizing: border-box;
+    padding: 16px 18px 14px;
+    background: rgba(244, 241, 222, 0.96); color: #1c1c1a;
+    border-radius: 14px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+    font: 14px/1.45 system-ui, -apple-system, sans-serif;
+  }
+  #help.hidden { display: none; }
+  #help h2 { margin: 0 0 10px; font-size: 16px; }
+  #help ul { margin: 0; padding: 0; list-style: none; }
+  #help li { display: flex; gap: 10px; margin-bottom: 8px; }
+  #help li span:first-child { flex: none; width: 20px; text-align: center; }
+  #help .keys { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid rgba(0, 0, 0, 0.12); font-size: 13px; color: #4a4a44; }
+  #help kbd {
+    display: inline-block; min-width: 1.4em; padding: 0 5px; text-align: center;
+    border: 1px solid rgba(0, 0, 0, 0.25); border-bottom-width: 2px; border-radius: 4px;
+    background: #fff; font: 12px/1.5 ui-monospace, monospace;
+  }
+  #help-close {
+    position: absolute; top: 8px; right: 8px; width: 28px; height: 28px;
+    border: 0; border-radius: 50%; background: transparent; color: #1c1c1a;
+    font-size: 20px; line-height: 1; cursor: pointer;
+  }
+  #help-close:hover { background: rgba(0, 0, 0, 0.08); }
+  #help-open {
+    position: fixed; right: 16px; top: 16px; z-index: 10;
+    width: 40px; height: 40px; border: 0; border-radius: 50%;
+    background: rgba(244, 241, 222, 0.92); color: #1c1c1a;
+    font: 700 20px/1 system-ui, sans-serif; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
 <script src="img-data.js"></script>
 </head>
 <body>
+
+<!-- The help card: tells visitors what they can do -->
+<div id="help">
+  <button id="help-close" aria-label="Close help">×</button>
+  <h2>Play with the stars ✨</h2>
+  <ul>
+    <li><span>✋</span><span><b>Drag the middle</b> of a star to move it. Let go while moving to throw it!</span></li>
+    <li><span>🔄</span><span><b>Grab a star's points</b> and move around it in a circle to turn it. It keeps spinning that way.</span></li>
+    <li><span>✏️</span><span><b>Press and drag on an empty spot</b> to draw your own star.</span></li>
+    <li><span>👆</span><span><b>Tap an empty spot</b> for a brand new picture.</span></li>
+    <li><span>🥞</span><span><b>Double-click a star</b> to flip which way it spins.</span></li>
+  </ul>
+  <p class="keys">
+    <kbd>Space</kbd> new picture ·
+    <kbd>R</kbd> <kbd>L</kbd> <kbd>M</kbd> spin right / left / mixed ·
+    <kbd>H</kbd> show or hide this help
+  </p>
+</div>
+<button id="help-open" aria-label="Show help">?</button>
+
+<script>
+// Open and close the help card
+function showHelp(show) {
+	document.getElementById("help").classList.toggle("hidden", !show);
+}
+document.getElementById("help-close").onclick = () => showHelp(false);
+document.getElementById("help-open").onclick = () => showHelp(true);
+</script>
 <script>
 /*
-2026/06/02 randomCrop() fix.
-When fetching images, `image()` is faster than `get()`!
+Draggable stars!
+- Drag a star: it follows your mouse in a smooth, flowy way.
+- Let go while moving: it gets thrown.
+- Stars that bump into each other push each other.
+- Grab the edge of a star and turn it like a knob.
+- Drag on an empty spot to draw your own star.
+- Tap an empty spot (or press the space bar) for a brand new picture.
 */
 let num;
 let cs;
 let paletteSelected;
-let pg, pg2; // (added) declare the two see-through layers
+let pg, pg2; // the two see-through layers (sparkles and confetti)
 
 let img;
 let palette = ["#F9F9F1", "#191A18", "#E15521", "#3391CF", "#E4901C", "#F5B2B1", "#009472"]
-let t = 0.0;
-let vel = 0.5;
+let vel = 0.5; // how fast the stars spin
+let spinMode = "mixed"; // (new) "mixed", "clockwise" or "counterclockwise"
+
+let stars = [];     // (new) the list of stars the computer remembers
+let grabbed = null; // (new) the star you are dragging right now (null = none)
+let grabOffsetX = 0;
+let grabOffsetY = 0;
+let twisting = null;     // (new) the star you are turning right now (null = none)
+let lastMouseAngle = 0;  // (new) where the mouse was around the star last time
+let drawing = null;      // (new) the new star you are drawing right now (null = none)
+let canvasEl;            // (new) the canvas on the page
+
+// (new) Where to grab a star. The middle moves it, the edge turns it.
+let moveZone = 0.45; // grab inside 45% of the star's size to MOVE it
+let grabZone = 0.9;  // grab further out (on the points) to TURN it. This is the size of the dotted ring.
+
+// (new) Numbers you can play with to change how things feel
+let springiness = 0.08; // how strongly a dragged star is pulled toward your mouse
+let flowiness = 0.8;    // closer to 1 = more swooshy and wobbly, smaller = stiffer
+let friction = 0.94;    // closer to 1 = stars slide further after a push
+let bounciness = 0.6;   // how bouncy bumps are (0 = no bounce, 1 = super bouncy)
 
 function preload() {
-	// ORIGINAL: img = loadImage("img.jpg")
-	// Same picture (img.jpg), but loaded from img-data.js so it also works
-	// when you open this page straight from your computer.
 	img = loadImage(IMG_DATA)
 }
 
@@ -63,117 +147,396 @@ function resetAndRestart() {
 		pg2.fill(random(palette))
 		pg2.ellipse(randomGaussian(width / 2, width * 0.3), randomGaussian(height / 2, height * 0.3), random() < 0.9 ? width * random(0.001, 0.003) : width * random(0.005, 0.007))
 	}
+
+	makeStars();
+	grabbed = null;
 }
 
 function setup() {
 	cs = min(windowHeight, windowWidth);
-	createCanvas(cs, cs);
+	canvasEl = createCanvas(cs, cs).elt; // remember the canvas, so we know when a click is on it
 	rectMode(CENTER)
 	angleMode(DEGREES);
 	num = random(100000);
 	paletteSelected = random(palettes);
-	img = img.get(40, 20, img.width - 40, img.height - 20); // (added) trim the gray strip on the left and the rounded top corner
+	img = img.get(40, 20, img.width - 40, img.height - 20); // trim the gray strip on the left and the rounded top corner
 	resetAndRestart()
 }
 
 function draw() {
-	randomSeed(num);
 	background("#f4f1de");
 
-	circlePacking();
+	updateStars();
+	for (let p of stars) {
+		drawStar(p);
+	}
+
+	// (new) The star you are drawing grows to reach your mouse
+	if (drawing) {
+		let d = dist(drawing.x, drawing.y, mouseX, mouseY);
+		setStarSize(drawing, constrain(d + 5, 15, 205));
+		drawing.angle += drawing.spin * vel * 0.5;
+		drawStar(drawing);
+	}
+
 	image(pg2, 0, 0)
 	image(pg, 0, 0)
-	t += vel;
+	updateCursor();
 }
 
-// (added) p5.js runs this every time you click.
-function mousePressed() {
-	num = random(100000);               // pick a new lucky number
-	paletteSelected = random(palettes); // pick a new crayon box
-	resetAndRestart();                  // remake the confetti and sparkles
-}
-
-function circlePacking() {
-	noStroke();
-	fill(51)
-	push();
-	let points = [];
-	let count = 1000;
-	for (let i = 0; i < count; i++) {
+// (new) Fit the stars together like cookies on a tray, ONCE.
+// Each star remembers everything about itself, so it can move around.
+function makeStars() {
+	stars = [];
+	for (let i = 0; i < 1000; i++) {
 		let s = random(15, 200);
 		let x = random(width);
 		let y = random(height);
 		let add = true;
-		for (let j = 0; j < points.length; j++) {
-			let p = points[j];
-			if (dist(x, y, p.x, p.y) < (s + p.z) * 0.6) {
+		for (let p of stars) {
+			if (dist(x, y, p.x, p.y) < (s + p.size) * 0.6) {
 				add = false;
 				break;
 			}
 		}
-		if (add) points.push(createVector(x, y, s));
+		if (add) {
+			stars.push(makeStar(x, y, s));
+		}
 	}
-	for (let i = 0; i < points.length; i++) {
-		let p = points[i];
-		push();
-		translate(p.x, p.y);
-		let ran = random([-1, 1])
-		rotate(ran * (t * 0.5))
-		let r = p.z - 5;
+}
 
-		fill(randomCol())
-		stroke(randomCol())
+// (new) Make one star. It remembers everything about itself.
+function makeStar(x, y, s) {
+	let p = {
+		x: x, y: y,          // where it is
+		vx: 0, vy: 0,        // how fast it is moving (sideways, up/down)
+		points: floor(random(3, 12)), // how many points the star has
+		depth: 1 - random(),          // how pointy it is
+		angle: 0,                     // how much it has turned
+		twistTarget: 0,               // where you are turning it to
+		spinBoost: 0,                 // extra spin after you flick it
+		spin: pickSpin(),             // 1 = clockwise, -1 = counterclockwise
+		cropX: random(0, img.width - s * 2),  // which piece of the painting it shows
+		cropY: random(0, img.height - s * 2),
+		col: randomCol()              // its color
+	};
+	setStarSize(p, s);
+	return p;
+}
 
-		push();
-		star(0, 0, r)
-		drawingContext.clip()
+// (new) Change how big a star is
+function setStarSize(p, s) {
+	p.size = s;
+	p.r = s - 5;         // how big it looks
+	p.bumpR = s * 0.6;   // how close another star can get before they push
+	p.mass = s * s;      // big stars are heavier and harder to push
+}
 
-		push();
-		blendMode(OVERLAY)
-		draw_randomCrop(-r, -r, r * 2);
-		star(0, 0, r)
+// (new) Is this spot inside the star's actual shape (not just its circle)?
+function insideStar(p, mx, my) {
+	// Turn the spot backwards by the star's angle, so we can pretend the star isn't turned
+	let dx = mx - p.x;
+	let dy = my - p.y;
+	let lx = dx * cos(-p.angle) - dy * sin(-p.angle);
+	let ly = dx * sin(-p.angle) + dy * cos(-p.angle);
 
-		pop();
-		pop();
-		pop();
+	// Make the list of the star's corners (tips and dips)
+	let corners = [];
+	let angle = 360 / p.points;
+	for (let k = 0; k < p.points; k++) {
+		let i = k * angle;
+		corners.push([p.r * cos(i), p.r * sin(i)]);
+		corners.push([p.r * p.depth * cos(i + angle * 0.5), p.r * p.depth * sin(i + angle * 0.5)]);
 	}
-	pop();
+
+	// Count how many edges a line going right from the spot crosses.
+	// An odd number means the spot is inside the shape!
+	let inside = false;
+	for (let a = 0, b = corners.length - 1; a < corners.length; b = a++) {
+		let [ax, ay] = corners[a];
+		let [bx, by] = corners[b];
+		if ((ay > ly) !== (by > ly) && lx < (bx - ax) * (ly - ay) / (by - ay) + ax) {
+			inside = !inside;
+		}
+	}
+	return inside;
 }
 
-function draw_randomCrop(x, y, w) {
-	push();
-	translate(x, y);
-	randomCrop(w);
-	pop();
+// (new) Move every star a tiny bit. This runs on every page of the flip-book.
+function updateStars() {
+	for (let p of stars) {
+		if (p === grabbed) {
+			// Flowy dragging: the star is pulled toward your mouse like it's on a
+			// rubber band, so it swooshes and wobbles instead of snapping.
+			let targetX = mouseX + grabOffsetX;
+			let targetY = mouseY + grabOffsetY;
+			p.vx += (targetX - p.x) * springiness;
+			p.vy += (targetY - p.y) * springiness;
+			p.vx *= flowiness;
+			p.vy *= flowiness;
+		} else {
+			// Friction slowly stops stars that were pushed.
+			p.vx *= friction;
+			p.vy *= friction;
+		}
+		p.x += p.vx;
+		p.y += p.vy;
+		if (p === twisting) {
+			// Turning like a knob: how far did the mouse go around the star?
+			let a = atan2(mouseY - p.y, mouseX - p.x);
+			let change = a - lastMouseAngle;
+			if (change > 180) change -= 360;  // going past "the top of the clock"
+			if (change < -180) change += 360;
+			lastMouseAngle = a;
+			p.twistTarget += change;
+
+			// Flowy: the star turns a bit of the way toward your mouse each page
+			let step = (p.twistTarget - p.angle) * 0.25;
+			p.angle += step;
+			p.spinBoost = step; // remember how fast you are turning it
+		} else {
+			p.angle += p.spin * vel * 0.5 + p.spinBoost;
+			p.spinBoost *= 0.96; // the extra spin from a flick slowly fades away
+		}
+
+		// Walls: bounce off the edges so stars don't leave the paper.
+		if (p.x < 0) { p.x = 0; p.vx *= -0.5; }
+		if (p.x > width) { p.x = width; p.vx *= -0.5; }
+		if (p.y < 0) { p.y = 0; p.vy *= -0.5; }
+		if (p.y > height) { p.y = height; p.vy *= -0.5; }
+	}
+
+	// Check for bumps a few times, so a push can travel along a chain of stars.
+	for (let k = 0; k < 3; k++) {
+		pushApart();
+	}
 }
 
-function randomCrop(w) {
-	let cropX = random(0, img.width - w * 2);
-	let cropY = random(0, img.height - w * 2);
-	image(img, 0, 0, w * 2, w * 2, cropX, cropY, w * 2, w * 2);
+// (new) When two stars overlap, push them apart and pass the push along.
+function pushApart() {
+	for (let i = 0; i < stars.length; i++) {
+		for (let j = i + 1; j < stars.length; j++) {
+			let a = stars[i];
+			let b = stars[j];
+			let dx = b.x - a.x;
+			let dy = b.y - a.y;
+			let d = sqrt(dx * dx + dy * dy);
+			let minD = a.bumpR + b.bumpR;
+
+			if (d < minD && d > 0.01) {
+				// Which way to push (a direction arrow of length 1)
+				let nx = dx / d;
+				let ny = dy / d;
+				let overlap = minD - d;
+
+				// Light stars move more, heavy stars move less.
+				// The star you are holding can't be pushed at all.
+				let ia = (a === grabbed) ? 0 : 1 / a.mass;
+				let ib = (b === grabbed) ? 0 : 1 / b.mass;
+				let total = ia + ib;
+				if (total === 0) continue;
+
+				// 1. Slide them apart so they stop overlapping
+				a.x -= nx * overlap * ia / total;
+				a.y -= ny * overlap * ia / total;
+				b.x += nx * overlap * ib / total;
+				b.y += ny * overlap * ib / total;
+
+				// 2. Pass on the speed, so the hit star keeps moving and can hit others
+				let closingSpeed = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+				if (closingSpeed < 0) {
+					let push = -(1 + bounciness) * closingSpeed / total;
+					a.vx -= push * ia * nx;
+					a.vy -= push * ia * ny;
+					b.vx += push * ib * nx;
+					b.vy += push * ib * ny;
+				}
+			}
+		}
+	}
 }
 
-function star(x, y, r) {
+// (new) Draw one star: a star-shaped window showing a piece of the painting.
+function drawStar(p) {
 	push();
 	noStroke();
-	translate(x, y);
-	let verticesNums = floor(random(3, 12)); //頂点数
-	let depth = 1 - random(); //くびれの深さ
+	translate(p.x, p.y);
+
+	// Flowy stretch: the faster a star moves, the more it stretches
+	// in that direction, like jelly.
+	let speed = min(sqrt(p.vx * p.vx + p.vy * p.vy), 30);
+	let stretch = 1 + speed * 0.01;
+	let direction = atan2(p.vy, p.vx);
+	rotate(direction);
+	scale(stretch, 1 / stretch);
+	rotate(-direction);
+
+	rotate(p.angle);
+
+	// 1. Paint the star with its solid color
+	fill(p.col);
+	starShape(p.r, p.points, p.depth);
+	drawingContext.clip(); // only draw inside the star from now on
+
+	// 2. Lay the painting on top, mixed with the color underneath
+	blendMode(OVERLAY);
+	image(img, -p.r, -p.r, p.r * 2, p.r * 2, p.cropX, p.cropY, p.r * 2, p.r * 2);
+
+	// 3. Mix the color in once more on top, just like the previous version
+	starShape(p.r, p.points, p.depth);
+	pop();
+}
+
+function starShape(r, points, depth) {
 	let radiusOuter = r;
 	let radiusInner = r * depth;
-	let angle = 360 / verticesNums
+	let angle = 360 / points;
 
 	beginShape();
-	for (let i = 0; i < 360; i += angle) {
-		let ex = radiusOuter * cos(i);
-		let ey = radiusOuter * sin(i);
-		vertex(ex, ey);
-		let ex2 = radiusInner * cos(i + (angle * 0.5));
-		let ey2 = radiusInner * sin(i + (angle * 0.5));
-		vertex(ex2, ey2);
+	for (let k = 0; k < points; k++) {
+		let i = k * angle;
+		vertex(radiusOuter * cos(i), radiusOuter * sin(i));               // a tip
+		vertex(radiusInner * cos(i + angle * 0.5), radiusInner * sin(i + angle * 0.5)); // a dip
 	}
 	endShape(CLOSE);
-	pop();
+}
+
+// (new) Find the star under the mouse. Checks the top one first.
+function starUnderMouse() {
+	for (let i = stars.length - 1; i >= 0; i--) {
+		let p = stars[i];
+		if (insideStar(p, mouseX, mouseY)) {
+			return i;
+		}
+	}
+	return -1; // -1 means "no star here"
+}
+
+function mousePressed(event) {
+	// Ignore clicks on the help card and its buttons
+	if (event && event.target !== canvasEl) return;
+
+	let i = starUnderMouse();
+	if (i >= 0) {
+		let p = stars[i];
+		// Bring this star to the front
+		stars.splice(i, 1);
+		stars.push(p);
+
+		if (dist(mouseX, mouseY, p.x, p.y) < p.r * moveZone) {
+			// Grabbed the middle: MOVE it
+			grabbed = p;
+			grabOffsetX = p.x - mouseX;
+			grabOffsetY = p.y - mouseY;
+		} else {
+			// Grabbed the edge: TURN it
+			twisting = p;
+			p.twistTarget = p.angle;
+			lastMouseAngle = atan2(mouseY - p.y, mouseX - p.x);
+		}
+	} else {
+		// Clicked an empty spot: start DRAWING a new star here
+		drawing = makeStar(mouseX, mouseY, 205);
+		setStarSize(drawing, 15);
+	}
+}
+
+function mouseReleased() {
+	grabbed = null; // let go (it keeps its speed, so you can throw it!)
+
+	if (drawing) {
+		if (drawing.r >= 15) {
+			// You dragged: keep the new star
+			stars.push(drawing);
+			drawing = null;
+		} else {
+			// Just a quick tap: make a brand new picture with new colors
+			drawing = null;
+			newPicture();
+		}
+	}
+
+	if (twisting) {
+		// It keeps spinning the way you were turning it
+		if (twisting.spinBoost > 0.05) twisting.spin = 1;   // you turned it clockwise
+		if (twisting.spinBoost < -0.05) twisting.spin = -1; // you turned it counterclockwise
+		twisting = null;
+	}
+}
+
+function keyPressed() {
+	if (key === ' ') newPicture();
+	if (key === 'h' || key === 'H') showHelp(document.getElementById("help").classList.contains("hidden"));
+	if (key === 'r' || key === 'R') setSpinMode("clockwise");        // R = all spin Right (clockwise)
+	if (key === 'l' || key === 'L') setSpinMode("counterclockwise"); // L = all spin Left (counterclockwise)
+	if (key === 'm' || key === 'M') setSpinMode("mixed");            // M = Mixed, some each way
+}
+
+// (new) Pick a spin direction for a star, depending on the spin mode
+function pickSpin() {
+	if (spinMode === "clockwise") return 1;
+	if (spinMode === "counterclockwise") return -1;
+	return random([-1, 1]); // mixed: flip a coin
+}
+
+// (new) Change the spin direction of every star
+function setSpinMode(mode) {
+	spinMode = mode;
+	for (let p of stars) {
+		p.spin = pickSpin();
+	}
+}
+
+// (new) Double-click a star to flip which way it spins
+function doubleClicked(event) {
+	if (event && event.target !== canvasEl) return;
+
+	let i = starUnderMouse();
+	if (i >= 0) {
+		stars[i].spin *= -1; // 1 becomes -1, and -1 becomes 1
+	}
+}
+
+function newPicture() {
+	num = random(100000);               // pick a new lucky number
+	paletteSelected = random(palettes); // pick a new crayon box
+	resetAndRestart();
+}
+
+// (new) Show a hand in the middle of a star, and a ring near the edge for turning
+function updateCursor() {
+	let turnStar = twisting;
+	if (drawing) {
+		cursor(CROSS);
+	} else if (grabbed) {
+		cursor('grabbing');
+	} else if (twisting) {
+		cursor('grabbing');
+	} else {
+		let i = starUnderMouse();
+		if (i < 0) {
+			cursor(CROSS); // a + sign means "you can draw a star here"
+		} else {
+			let p = stars[i];
+			if (dist(mouseX, mouseY, p.x, p.y) < p.r * moveZone) {
+				cursor('grab');
+			} else {
+				cursor('grab');
+				turnStar = p;
+			}
+		}
+	}
+
+	// Draw a thin ring to show "you can turn this one"
+	if (turnStar) {
+		push();
+		noFill();
+		stroke(255, 200);
+		strokeWeight(2);
+		drawingContext.setLineDash([6, 6]);
+		circle(turnStar.x, turnStar.y, turnStar.r * grabZone * 2);
+		pop();
+	}
 }
 
 function randomCol() {
